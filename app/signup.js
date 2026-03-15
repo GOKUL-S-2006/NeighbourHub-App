@@ -2,6 +2,9 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from "reac
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { registerUser } from "../src/api/auth";
+;
+
+
 
 //console.log("registerUser:", registerUser);
 
@@ -22,16 +25,15 @@ export default function Signup() {
     try {
       setLoading(true);
 
-      const res = await registerUser({
-        name,
-        email,
-        password,
-      });
-
+     const res = await registerUser({
+  name: name.trim(),
+  email: email.trim().toLowerCase(),
+  password: password.trim(),
+});
       console.log("Signup success:", res);
 
       Alert.alert("Success", "Account created successfully");
-      router.replace("/login");
+     router.replace("/");
 
     } catch (error) {
       console.log(error.response?.data || error.message);

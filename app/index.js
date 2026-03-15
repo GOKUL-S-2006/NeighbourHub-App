@@ -2,6 +2,9 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from "reac
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { loginUser } from "../src/api/auth";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+
 
 export default function Login() {
   const router = useRouter();
@@ -11,34 +14,42 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
-    if (!email || !password) {
-      Alert.alert("Error", "Please fill all fields");
+  if (!email || !password) {
+    Alert.alert("Error", "Please fill all fields");
+    return;
+  }
+
+  try {
+    setLoading(true);
+
+   const res = await loginUser({ 
+  email: email.trim().toLowerCase(), 
+  password: password.trim() 
+});
+
+    // Get token safely
+    const token = res?.token || res?.data?.token;
+
+    if (!token) {
+      Alert.alert("Login Failed", "No token returned from server");
       return;
     }
 
-    try {
-      setLoading(true);
+    await AsyncStorage.setItem("token", token);
 
-      const res = await loginUser({
-        email,
-        password,
-      });
+    router.replace("/home");
 
-      //console.log("Login success:", res);
+  } catch (error) {
+    console.log(error.response?.data || error.message);
+    Alert.alert(
+      "Login Failed",
+      error.response?.data?.message || "Invalid credentials"
+    );
+  } finally {
+    setLoading(false);
+  }
+};
 
-      // ✅ Navigate after successful login
-      router.replace("/home");
-
-    } catch (error) {
-      console.log(error.response?.data || error.message);
-      Alert.alert(
-        "Login Failed",
-        error.response?.data?.message || "Invalid credentials"
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
 
   return (
     <View style={styles.container}>

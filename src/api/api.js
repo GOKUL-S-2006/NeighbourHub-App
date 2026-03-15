@@ -1,12 +1,20 @@
 import axios from "axios";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-// ⚠️ Use your local IP, NOT localhost
-// Example: http://192.168.1.5:5000
 const API = axios.create({
-  baseURL: "http://172.16.190.133:5000/api",
+  baseURL: "http://10.104.77.133:5000/api",
   headers: {
     "Content-Type": "application/json",
   },
+});
+
+// ✅ Auto-attach token to every request
+API.interceptors.request.use(async (config) => {
+  const token = await AsyncStorage.getItem("token");
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
 });
 
 export default API;

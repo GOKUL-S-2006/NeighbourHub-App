@@ -11,7 +11,7 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "d
 
 // src/api/auth.js
 var API = _axios["default"].create({
-  baseURL: "http://172.16.190.133:5000/api",
+  baseURL: "http://10.104.77.133:5000/api",
   // <-- your IP
   headers: {
     "Content-Type": "application/json"

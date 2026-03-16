@@ -31,8 +31,6 @@ export default function Home() {
   const [issues, setIssues] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
-
-  // search & filter state
   const [searchQuery, setSearchQuery] = useState("");
   const [activeCategory, setActiveCategory] = useState("all");
   const [activeStatus, setActiveStatus] = useState("all");
@@ -72,22 +70,16 @@ export default function Home() {
   };
 
   const handleNearby = async () => {
-    if (nearbyOnly) {
-      setNearbyOnly(false);
-      return;
-    }
+    if (nearbyOnly) { setNearbyOnly(false); return; }
     setLocationLoading(true);
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert("Permission denied", "Location permission is required for nearby filter.");
+        Alert.alert("Permission denied", "Location permission is required.");
         return;
       }
       const loc = await Location.getCurrentPositionAsync({});
-      setUserCoords({
-        latitude: loc.coords.latitude,
-        longitude: loc.coords.longitude,
-      });
+      setUserCoords({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
       setNearbyOnly(true);
     } catch (err) {
       Alert.alert("Error", "Could not get your location.");
@@ -115,11 +107,8 @@ export default function Home() {
     }
   };
 
-  // ─── FILTERED ISSUES ──────────────────────────────────
   const filteredIssues = useMemo(() => {
     let result = [...issues];
-
-    // search by title or description
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       result = result.filter(i =>
@@ -128,28 +117,16 @@ export default function Home() {
         i.category?.toLowerCase().includes(q)
       );
     }
-
-    // filter by category
-    if (activeCategory !== "all") {
-      result = result.filter(i => i.category === activeCategory);
-    }
-
-    // filter by status
-    if (activeStatus !== "all") {
-      result = result.filter(i => i.status === activeStatus);
-    }
-
-    // filter by nearby (within 5km)
+    if (activeCategory !== "all") result = result.filter(i => i.category === activeCategory);
+    if (activeStatus !== "all")   result = result.filter(i => i.status === activeStatus);
     if (nearbyOnly && userCoords) {
       result = result.filter(i => {
         if (!i.location) return false;
         const [lat, lon] = i.location.split(",").map(Number);
         if (isNaN(lat) || isNaN(lon)) return false;
-        const dist = getDistance(userCoords.latitude, userCoords.longitude, lat, lon);
-        return dist <= 5; // 5km radius
+        return getDistance(userCoords.latitude, userCoords.longitude, lat, lon) <= 5;
       });
     }
-
     return result;
   }, [issues, searchQuery, activeCategory, activeStatus, nearbyOnly, userCoords]);
 
@@ -158,9 +135,11 @@ export default function Home() {
     activeStatus !== "all",
     nearbyOnly,
   ].filter(Boolean).length;
+console.log("🏠 buttons visible - map:", true, "news:", true, "admin:", currentUser?.role === "admin");
 
   return (
     <View style={styles.container}>
+
       {/* ── Header ── */}
       <View style={styles.header}>
         <View>
@@ -168,25 +147,55 @@ export default function Home() {
           <Text style={styles.subTitle}>Local issues, community fixes</Text>
         </View>
 
+        {/* ✅ All buttons inside headerRight */}
         <View style={styles.headerRight}>
+
+          {/* Map button */}
+          <TouchableOpacity
+            style={styles.mapBtn}
+            onPress={() => router.push("/map")}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="map" size={18} color="#fff" />
+          </TouchableOpacity>
+
+          {/* News button */}
+          <TouchableOpacity
+            style={styles.newsBtn}
+            onPress={() => router.push("/news")}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="newspaper" size={18} color="#fff" />
+          </TouchableOpacity>
+
+          {/* Admin button — only for admin */}
           {currentUser?.role === "admin" && (
             <TouchableOpacity
               style={styles.adminBtn}
-              onPress={() => router.push({ pathname: "/admin", params: { user: JSON.stringify(currentUser) } })}
+              onPress={() => router.push({
+                pathname: "/admin",
+                params: { user: JSON.stringify(currentUser) }
+              })}
               activeOpacity={0.8}
             >
               <Ionicons name="shield-checkmark" size={18} color="#fff" />
             </TouchableOpacity>
           )}
+
+          {/* Profile bubble */}
           <TouchableOpacity
             style={styles.avatarBubble}
-            onPress={() => router.push({ pathname: "/profile", params: { user: JSON.stringify(currentUser) } })}
+            onPress={() => router.push({
+              pathname: "/profile",
+              params: { user: JSON.stringify(currentUser) }
+            })}
             activeOpacity={0.8}
           >
             <Text style={styles.avatarInitial}>
               {currentUser?.name?.[0]?.toUpperCase() || "?"}
             </Text>
           </TouchableOpacity>
+
         </View>
       </View>
 
@@ -214,7 +223,11 @@ export default function Home() {
           onPress={() => setShowFilters(!showFilters)}
           activeOpacity={0.8}
         >
-          <Ionicons name="options-outline" size={20} color={activeFilterCount > 0 ? "#fff" : "#1e293b"} />
+          <Ionicons
+            name="options-outline"
+            size={20}
+            color={activeFilterCount > 0 ? "#fff" : "#1e293b"}
+          />
           {activeFilterCount > 0 && (
             <View style={styles.filterBadge}>
               <Text style={styles.filterBadgeText}>{activeFilterCount}</Text>
@@ -226,23 +239,21 @@ export default function Home() {
       {/* ── Filters Panel ── */}
       {showFilters && (
         <View style={styles.filtersPanel}>
-          {/* Nearby toggle */}
           <TouchableOpacity
             style={[styles.nearbyBtn, nearbyOnly && styles.nearbyBtnActive]}
             onPress={handleNearby}
             activeOpacity={0.8}
           >
-            {locationLoading ? (
-              <Ionicons name="reload-outline" size={15} color={nearbyOnly ? "#fff" : "#2563eb"} />
-            ) : (
-              <Ionicons name="location" size={15} color={nearbyOnly ? "#fff" : "#2563eb"} />
-            )}
+            <Ionicons
+              name={locationLoading ? "reload-outline" : "location"}
+              size={15}
+              color={nearbyOnly ? "#fff" : "#2563eb"}
+            />
             <Text style={[styles.nearbyText, nearbyOnly && styles.nearbyTextActive]}>
               {nearbyOnly ? "📍 Nearby (5km) — ON" : "Show Nearby Only (5km)"}
             </Text>
           </TouchableOpacity>
 
-          {/* Category filter */}
           <Text style={styles.filterLabel}>Category</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow}>
             {CATEGORIES.map(cat => (
@@ -258,7 +269,6 @@ export default function Home() {
             ))}
           </ScrollView>
 
-          {/* Status filter */}
           <Text style={styles.filterLabel}>Status</Text>
           <View style={styles.statusRow}>
             {STATUSES.map(s => (
@@ -274,7 +284,6 @@ export default function Home() {
             ))}
           </View>
 
-          {/* Clear filters */}
           {activeFilterCount > 0 && (
             <TouchableOpacity
               style={styles.clearBtn}
@@ -299,7 +308,12 @@ export default function Home() {
           {nearbyOnly ? " nearby" : ""}
         </Text>
         {(searchQuery || activeFilterCount > 0) && (
-          <TouchableOpacity onPress={() => { setSearchQuery(""); setActiveCategory("all"); setActiveStatus("all"); setNearbyOnly(false); }}>
+          <TouchableOpacity onPress={() => {
+            setSearchQuery("");
+            setActiveCategory("all");
+            setActiveStatus("all");
+            setNearbyOnly(false);
+          }}>
             <Text style={styles.clearText}>Clear</Text>
           </TouchableOpacity>
         )}
@@ -344,29 +358,45 @@ export default function Home() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f1f5f9", paddingHorizontal: 12, paddingTop: 52 },
 
-  // Header
   header: {
     flexDirection: "row", justifyContent: "space-between",
     alignItems: "center", marginBottom: 16, paddingHorizontal: 4,
   },
-  appName: { fontSize: 24, fontWeight: "800", color: "#1e293b" },
+  appName:  { fontSize: 24, fontWeight: "800", color: "#1e293b" },
   subTitle: { fontSize: 12, color: "#94a3b8", marginTop: 2 },
-  headerRight: { flexDirection: "row", alignItems: "center", gap: 10 },
+
+  headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
+
+  mapBtn: {
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: "#0f766e",
+    justifyContent: "center", alignItems: "center",
+    shadowColor: "#0f766e", shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3, shadowRadius: 6, elevation: 4,
+  },
+  newsBtn: {
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: "#7c3aed",
+    justifyContent: "center", alignItems: "center",
+    shadowColor: "#7c3aed", shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3, shadowRadius: 6, elevation: 4,
+  },
   adminBtn: {
-    width: 42, height: 42, borderRadius: 21,
-    backgroundColor: "#dc2626", justifyContent: "center", alignItems: "center",
-    shadowColor: "#dc2626", shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35, shadowRadius: 8, elevation: 6,
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: "#dc2626",
+    justifyContent: "center", alignItems: "center",
+    shadowColor: "#dc2626", shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3, shadowRadius: 6, elevation: 4,
   },
   avatarBubble: {
-    width: 42, height: 42, borderRadius: 21,
-    backgroundColor: "#2563eb", justifyContent: "center", alignItems: "center",
-    shadowColor: "#2563eb", shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35, shadowRadius: 8, elevation: 6,
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: "#2563eb",
+    justifyContent: "center", alignItems: "center",
+    shadowColor: "#2563eb", shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3, shadowRadius: 6, elevation: 4,
   },
-  avatarInitial: { fontSize: 17, fontWeight: "800", color: "#fff" },
+  avatarInitial: { fontSize: 15, fontWeight: "800", color: "#fff" },
 
-  // Search
   searchRow: { flexDirection: "row", gap: 10, marginBottom: 10 },
   searchBox: {
     flex: 1, flexDirection: "row", alignItems: "center",
@@ -386,11 +416,11 @@ const styles = StyleSheet.create({
   filterBadge: {
     position: "absolute", top: 6, right: 6,
     width: 16, height: 16, borderRadius: 8,
-    backgroundColor: "#ef4444", justifyContent: "center", alignItems: "center",
+    backgroundColor: "#ef4444",
+    justifyContent: "center", alignItems: "center",
   },
   filterBadgeText: { fontSize: 10, color: "#fff", fontWeight: "800" },
 
-  // Filters panel
   filtersPanel: {
     backgroundColor: "#fff", borderRadius: 16,
     padding: 14, marginBottom: 10,
@@ -403,19 +433,19 @@ const styles = StyleSheet.create({
     paddingVertical: 10, paddingHorizontal: 14,
     marginBottom: 12, borderWidth: 1, borderColor: "#bfdbfe",
   },
-  nearbyBtnActive: { backgroundColor: "#2563eb", borderColor: "#2563eb" },
-  nearbyText: { fontSize: 13, fontWeight: "600", color: "#2563eb" },
+  nearbyBtnActive:  { backgroundColor: "#2563eb", borderColor: "#2563eb" },
+  nearbyText:       { fontSize: 13, fontWeight: "600", color: "#2563eb" },
   nearbyTextActive: { color: "#fff" },
 
   filterLabel: { fontSize: 12, fontWeight: "700", color: "#6b7280", marginBottom: 8 },
-  chipRow: { marginBottom: 12 },
+  chipRow:     { marginBottom: 12 },
   chip: {
     paddingHorizontal: 14, paddingVertical: 7,
     borderRadius: 20, backgroundColor: "#f1f5f9",
     marginRight: 8, borderWidth: 1, borderColor: "#e5e7eb",
   },
-  chipActive: { backgroundColor: "#1e293b", borderColor: "#1e293b" },
-  chipText: { fontSize: 12, fontWeight: "600", color: "#6b7280" },
+  chipActive:     { backgroundColor: "#1e293b", borderColor: "#1e293b" },
+  chipText:       { fontSize: 12, fontWeight: "600", color: "#6b7280" },
   chipTextActive: { color: "#fff" },
 
   statusRow: { flexDirection: "row", gap: 8, marginBottom: 8 },
@@ -424,31 +454,27 @@ const styles = StyleSheet.create({
     backgroundColor: "#f1f5f9", alignItems: "center",
     borderWidth: 1, borderColor: "#e5e7eb",
   },
-  statusChipActive: { backgroundColor: "#1e293b", borderColor: "#1e293b" },
-  statusChipText: { fontSize: 11, fontWeight: "600", color: "#6b7280" },
+  statusChipActive:     { backgroundColor: "#1e293b", borderColor: "#1e293b" },
+  statusChipText:       { fontSize: 11, fontWeight: "600", color: "#6b7280" },
   statusChipTextActive: { color: "#fff" },
 
   clearBtn: {
     flexDirection: "row", alignItems: "center",
-    justifyContent: "center", gap: 6,
-    paddingVertical: 8, marginTop: 4,
+    justifyContent: "center", gap: 6, paddingVertical: 8, marginTop: 4,
   },
   clearBtnText: { fontSize: 13, color: "#ef4444", fontWeight: "600" },
 
-  // Results
   resultsRow: {
     flexDirection: "row", justifyContent: "space-between",
     alignItems: "center", paddingHorizontal: 4, marginBottom: 8,
   },
   resultsText: { fontSize: 13, color: "#6b7280", fontWeight: "500" },
-  clearText: { fontSize: 13, color: "#2563eb", fontWeight: "600" },
+  clearText:   { fontSize: 13, color: "#2563eb", fontWeight: "600" },
 
-  // Empty state
-  emptyState: { alignItems: "center", paddingVertical: 60 },
-  emptyTitle: { fontSize: 17, fontWeight: "700", color: "#9ca3af", marginTop: 12 },
+  emptyState:    { alignItems: "center", paddingVertical: 60 },
+  emptyTitle:    { fontSize: 17, fontWeight: "700", color: "#9ca3af", marginTop: 12 },
   emptySubtitle: { fontSize: 13, color: "#d1d5db", marginTop: 4 },
 
-  // FAB
   fab: {
     position: "absolute", bottom: 30, right: 20,
     backgroundColor: "#2563eb", width: 60, height: 60,

@@ -2,7 +2,7 @@ import axios from "axios";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const API = axios.create({
-  baseURL: "http://10.104.77.133:5000/api",
+  baseURL: "https://neighbourhub-backend.onrender.com/api",
   headers: {
     "Content-Type": "application/json",
   },

@@ -2,7 +2,7 @@
 import axios from "axios";
 
 const API = axios.create({
-  baseURL: "https://neighbourhub-backend.onrender.com/api", // your local IP
+  baseURL: "http://10.91.197.133:5000/api", // your local IP
   headers: {
     "Content-Type": "application/json",
   },

@@ -1,11 +1,13 @@
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet,
-  Alert, StatusBar, RefreshControl, ScrollView
+  Alert, StatusBar, RefreshControl, ScrollView,
+  Modal, Image, ActivityIndicator,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useEffect, useState, useRef } from "react";
 import { Ionicons, MaterialIcons, Feather } from "@expo/vector-icons";
 import * as Linking from "expo-linking";
+import * as ImagePicker from "expo-image-picker";
 import {
   getAdminIssues,
   getAdminStats,
@@ -34,6 +36,7 @@ const SORT_OPTIONS = [
 ];
 
 const ALL_STATUSES = ["open", "in-progress", "resolved"];
+const BACKEND_URL  = "http://10.91.197.133:5000";
 
 export default function AdminScreen({ currentUser }) {
   const router = useRouter();
@@ -46,6 +49,13 @@ export default function AdminScreen({ currentUser }) {
   const [page, setPage]                   = useState(1);
   const [totalPages, setTotalPages]       = useState(1);
   const [showAnalytics, setShowAnalytics] = useState(false);
+
+  // ── PROOF MODAL STATE ─────────────────────────────────
+  const [proofModal, setProofModal]       = useState(false);
+  const [proofIssue, setProofIssue]       = useState(null);   // the issue being resolved
+  const [proofImage, setProofImage]       = useState(null);   // local URI of after-image
+  const [verifying, setVerifying]         = useState(false);  // AI checking
+  const [verifyResult, setVerifyResult]   = useState(null);   // AI result
 
   useEffect(() => { loadAll(); }, []);
   useEffect(() => { loadIssues(1); }, [activeFilter]);
@@ -90,15 +100,9 @@ export default function AdminScreen({ currentUser }) {
       if (sevB !== sevA) return sevB - sevA;
       return (b.votes || 0) - (a.votes || 0);
     }
-    if (activeSort === "votes") {
-      return (b.votes || 0) - (a.votes || 0);
-    }
-    if (activeSort === "newest") {
-      return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
-    }
-    if (activeSort === "oldest") {
-      return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
-    }
+    if (activeSort === "votes")  return (b.votes || 0) - (a.votes || 0);
+    if (activeSort === "newest") return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+    if (activeSort === "oldest") return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
     return 0;
   });
 
@@ -116,25 +120,95 @@ export default function AdminScreen({ currentUser }) {
     return { resRate, avgPerWeek, topCat, urgentCount, avgVotes };
   })() : null;
 
-  // ─── STATUS CHANGE ────────────────────────────────────
+  // ─── STATUS CHANGE ─────────────────────────────────────
   const handleStatusChange = (issue) => {
     Alert.alert("Update Status", `Change "${issue.title}" to:`, [
       ...ALL_STATUSES
         .filter(s => s !== issue.status)
         .map(s => ({
           text: s.charAt(0).toUpperCase() + s.slice(1),
-          onPress: async () => {
-            try {
-              await adminUpdateStatus(issue._id, s);
-              setIssues(prev => prev.map(i => i._id === issue._id ? { ...i, status: s } : i));
-              loadStats();
-            } catch (err) {
-              Alert.alert("Error", err.response?.data?.message || err.message);
+          onPress: () => {
+            if (s === "resolved") {
+              // ── Intercept resolved → show proof modal
+              setProofIssue(issue);
+              setProofImage(null);
+              setVerifyResult(null);
+              setProofModal(true);
+            } else {
+              // Other statuses → update directly
+              applyStatusUpdate(issue._id, s);
             }
           }
         })),
       { text: "Cancel", style: "cancel" }
     ]);
+  };
+
+  const applyStatusUpdate = async (issueId, status) => {
+    try {
+      await adminUpdateStatus(issueId, status);
+      setIssues(prev => prev.map(i => i._id === issueId ? { ...i, status } : i));
+      loadStats();
+    } catch (err) {
+      Alert.alert("Error", err.response?.data?.message || err.message);
+    }
+  };
+
+  // ─── PICK PROOF IMAGE ──────────────────────────────────
+  const pickProofImage = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) { Alert.alert("Permission required"); return; }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      quality: 0.7,
+    });
+    if (!result.canceled) {
+      setProofImage(result.assets[0].uri);
+      setVerifyResult(null); // reset previous result
+    }
+  };
+
+  // ─── AI VERIFY REPAIR ──────────────────────────────────
+  const verifyRepair = async () => {
+    if (!proofImage || !proofIssue) return;
+    setVerifying(true);
+    setVerifyResult(null);
+    try {
+      const formData = new FormData();
+      formData.append("afterImage", {
+        uri: proofImage,
+        name: "proof.jpg",
+        type: "image/jpeg",
+      });
+      formData.append("beforeImageUrl", proofIssue.image || "");
+      formData.append("category", proofIssue.category || "general");
+      formData.append("issueTitle", proofIssue.title || "");
+
+      const response = await fetch(`${BACKEND_URL}/api/verify-repair`, {
+        method: "POST",
+        body: formData,
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+
+      const data = await response.json();
+      setVerifyResult(data);
+    } catch (err) {
+      console.log("Verify error:", err.message);
+      Alert.alert("Error", "Failed to verify. Please try again.");
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  // ─── CONFIRM RESOLVE ───────────────────────────────────
+  const confirmResolve = async () => {
+    if (!verifyResult?.isRepaired) return;
+    await applyStatusUpdate(proofIssue._id, "resolved");
+    setProofModal(false);
+    setProofIssue(null);
+    setProofImage(null);
+    setVerifyResult(null);
+    Alert.alert("✅ Issue Resolved", "The issue has been marked as resolved.");
   };
 
   // ─── DELETE ───────────────────────────────────────────
@@ -174,27 +248,19 @@ export default function AdminScreen({ currentUser }) {
   // ─── RENDER ISSUE ─────────────────────────────────────
   const renderIssue = ({ item, index }) => {
     if (!item || !item._id) return null;
-
     const color  = STATUS_COLORS[item.status] || STATUS_COLORS.open;
     const sevBar = SEVERITY_BAR_COLORS[item.severity] || "#16a34a";
     const isTop3 = index < 3 && activeSort === "priority";
 
     return (
       <View style={[styles.card, isTop3 && styles.cardTop]}>
-
-        {/* Priority rank badge */}
         {isTop3 && (
           <View style={styles.rankBadge}>
             <Text style={styles.rankText}>#{index + 1} Priority</Text>
           </View>
         )}
-
-        {/* Severity bar */}
         <View style={[styles.sevBar, { backgroundColor: sevBar }]} />
-
         <View style={styles.cardInner}>
-
-          {/* Title + Status */}
           <View style={styles.cardTitleRow}>
             <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
             <View style={[styles.badge, { backgroundColor: color.bg }]}>
@@ -204,11 +270,7 @@ export default function AdminScreen({ currentUser }) {
               </Text>
             </View>
           </View>
-
-          {/* Description */}
           <Text style={styles.cardDesc} numberOfLines={2}>{item.description}</Text>
-
-          {/* Severity + Category tags */}
           <View style={styles.tagRow}>
             {item.severity && (
               <View style={[styles.sevTag, { backgroundColor: sevBar + "22" }]}>
@@ -223,8 +285,6 @@ export default function AdminScreen({ currentUser }) {
               </View>
             )}
           </View>
-
-          {/* Posted by */}
           {item.createdBy && (
             <View style={styles.postedBy}>
               <Ionicons name="person-circle-outline" size={14} color="#94a3b8" />
@@ -233,8 +293,6 @@ export default function AdminScreen({ currentUser }) {
               </Text>
             </View>
           )}
-
-          {/* Meta row */}
           <View style={styles.cardMeta}>
             <View style={styles.metaItem}>
               <Ionicons name="arrow-up-circle" size={14} color="#16a34a" />
@@ -243,9 +301,7 @@ export default function AdminScreen({ currentUser }) {
             {item.location && (
               <TouchableOpacity
                 style={styles.metaItem}
-                onPress={() => Linking.openURL(
-                  `https://www.google.com/maps/search/?api=1&query=${item.location}`
-                )}
+                onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${item.location}`)}
               >
                 <MaterialIcons name="location-on" size={14} color="#2563eb" />
                 <Text style={[styles.metaText, { color: "#2563eb" }]}>Map</Text>
@@ -253,32 +309,19 @@ export default function AdminScreen({ currentUser }) {
             )}
             {item.createdAt && (
               <Text style={styles.dateText}>
-                {new Date(item.createdAt).toLocaleDateString("en-IN", {
-                  day: "numeric", month: "short", year: "2-digit"
-                })}
+                {new Date(item.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "2-digit" })}
               </Text>
             )}
           </View>
-
-          {/* Actions */}
           <View style={styles.cardActions}>
-            <TouchableOpacity
-              style={styles.statusBtn}
-              onPress={() => handleStatusChange(item)}
-              activeOpacity={0.8}
-            >
+            <TouchableOpacity style={styles.statusBtn} onPress={() => handleStatusChange(item)} activeOpacity={0.8}>
               <Ionicons name="swap-horizontal" size={15} color="#fff" />
               <Text style={styles.statusBtnText}>Change Status</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.deleteBtn}
-              onPress={() => handleDelete(item)}
-              activeOpacity={0.8}
-            >
+            <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDelete(item)} activeOpacity={0.8}>
               <Feather name="trash-2" size={15} color="#ef4444" />
             </TouchableOpacity>
           </View>
-
         </View>
       </View>
     );
@@ -287,6 +330,141 @@ export default function AdminScreen({ currentUser }) {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
+
+      {/* ── PROOF VERIFICATION MODAL ── */}
+      <Modal visible={proofModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <ScrollView showsVerticalScrollIndicator={false}>
+
+              {/* Header */}
+              <View style={styles.modalHeader}>
+                <Ionicons name="shield-checkmark" size={28} color="#2563eb" />
+                <Text style={styles.modalTitle}>Proof of Repair Required</Text>
+                <Text style={styles.modalSubtitle}>
+                  Upload an after-repair photo. AI will verify if the issue is genuinely fixed before marking as resolved.
+                </Text>
+              </View>
+
+              {/* Before / After images */}
+              <View style={styles.compareRow}>
+                {/* Before */}
+                <View style={styles.compareBox}>
+                  <Text style={styles.compareLabel}>BEFORE</Text>
+                  {proofIssue?.image ? (
+                    <Image source={{ uri: proofIssue.image }} style={styles.compareImage} />
+                  ) : (
+                    <View style={[styles.compareImage, styles.noImageBox]}>
+                      <Ionicons name="image-outline" size={28} color="#94a3b8" />
+                      <Text style={styles.noImageText}>No image</Text>
+                    </View>
+                  )}
+                </View>
+
+                <Ionicons name="arrow-forward" size={22} color="#94a3b8" style={{ marginTop: 40 }} />
+
+                {/* After */}
+                <View style={styles.compareBox}>
+                  <Text style={styles.compareLabel}>AFTER</Text>
+                  {proofImage ? (
+                    <Image source={{ uri: proofImage }} style={styles.compareImage} />
+                  ) : (
+                    <TouchableOpacity style={[styles.compareImage, styles.uploadBox]} onPress={pickProofImage}>
+                      <Ionicons name="camera-outline" size={28} color="#2563eb" />
+                      <Text style={styles.uploadBoxText}>Tap to upload</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+
+              {/* Change photo button */}
+              {proofImage && (
+                <TouchableOpacity style={styles.changePhotoBtn} onPress={pickProofImage}>
+                  <Ionicons name="refresh" size={14} color="#2563eb" />
+                  <Text style={styles.changePhotoText}>Change Photo</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* AI Verify Button */}
+              {proofImage && !verifyResult && (
+                <TouchableOpacity
+                  style={[styles.verifyBtn, verifying && { opacity: 0.7 }]}
+                  onPress={verifyRepair}
+                  disabled={verifying}
+                >
+                  {verifying ? (
+                    <>
+                      <ActivityIndicator color="#fff" size="small" />
+                      <Text style={styles.verifyBtnText}>AI is verifying repair...</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Ionicons name="scan" size={18} color="#fff" />
+                      <Text style={styles.verifyBtnText}>Verify with AI</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
+
+              {/* AI Result */}
+              {verifyResult && (
+                <View style={[
+                  styles.resultBox,
+                  { backgroundColor: verifyResult.isRepaired ? "#f0fdf4" : "#fef2f2" }
+                ]}>
+                  <Ionicons
+                    name={verifyResult.isRepaired ? "checkmark-circle" : "close-circle"}
+                    size={32}
+                    color={verifyResult.isRepaired ? "#16a34a" : "#dc2626"}
+                  />
+                  <Text style={[
+                    styles.resultTitle,
+                    { color: verifyResult.isRepaired ? "#16a34a" : "#dc2626" }
+                  ]}>
+                    {verifyResult.isRepaired ? "Repair Verified ✅" : "Repair Not Confirmed ❌"}
+                  </Text>
+                  <Text style={styles.resultReason}>{verifyResult.reason}</Text>
+                  <View style={styles.confidenceRow}>
+                    <Text style={styles.confidenceLabel}>AI Confidence:</Text>
+                    <Text style={[
+                      styles.confidenceValue,
+                      { color: verifyResult.isRepaired ? "#16a34a" : "#dc2626" }
+                    ]}>
+                      {verifyResult.confidence}%
+                    </Text>
+                  </View>
+                </View>
+              )}
+
+              {/* Action Buttons */}
+              <View style={styles.modalActions}>
+                {verifyResult?.isRepaired && (
+                  <TouchableOpacity style={styles.resolveBtn} onPress={confirmResolve}>
+                    <Ionicons name="checkmark-circle" size={18} color="#fff" />
+                    <Text style={styles.resolveBtnText}>Mark as Resolved</Text>
+                  </TouchableOpacity>
+                )}
+
+                {verifyResult && !verifyResult.isRepaired && (
+                  <TouchableOpacity style={styles.retryBtn} onPress={() => { setProofImage(null); setVerifyResult(null); }}>
+                    <Ionicons name="refresh" size={16} color="#2563eb" />
+                    <Text style={styles.retryBtnText}>Upload Different Photo</Text>
+                  </TouchableOpacity>
+                )}
+
+                <TouchableOpacity style={styles.cancelBtn} onPress={() => {
+                  setProofModal(false);
+                  setProofImage(null);
+                  setVerifyResult(null);
+                }}>
+                  <Text style={styles.cancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* ── Header ── */}
       <View style={styles.header}>
@@ -310,10 +488,10 @@ export default function AdminScreen({ currentUser }) {
       {/* ── Stats Row ── */}
       <View style={styles.statsRow}>
         {[
-          { val: stats?.totalIssues,     label: "Total",    bg: "#1e293b" },
-          { val: stats?.openIssues,      label: "Open",     bg: "#16a34a" },
-          { val: stats?.inProgressIssues,label: "Progress", bg: "#ca8a04" },
-          { val: stats?.resolvedIssues,  label: "Resolved", bg: "#2563eb" },
+          { val: stats?.totalIssues,      label: "Total",    bg: "#1e293b" },
+          { val: stats?.openIssues,       label: "Open",     bg: "#16a34a" },
+          { val: stats?.inProgressIssues, label: "Progress", bg: "#ca8a04" },
+          { val: stats?.resolvedIssues,   label: "Resolved", bg: "#2563eb" },
         ].map(s => (
           <View key={s.label} style={[styles.statCard, { backgroundColor: s.bg }]}>
             <Text style={styles.statNum}>{s.val ?? "-"}</Text>
@@ -322,7 +500,6 @@ export default function AdminScreen({ currentUser }) {
         ))}
       </View>
 
-      {/* ── Extra Stats ── */}
       {stats && (
         <View style={styles.extraStats}>
           <View style={styles.extraStatItem}>
@@ -349,20 +526,15 @@ export default function AdminScreen({ currentUser }) {
 
         ListHeaderComponent={
           <View>
-            {/* Analytics Panel */}
             {showAnalytics && analytics && (
               <View style={styles.analyticsPanel}>
                 <Text style={styles.analyticsPanelTitle}>Community Analytics</Text>
-
                 <View style={styles.analyticsGrid}>
                   <View style={styles.analyticsCard}>
                     <Text style={styles.analyticsNum}>{analytics.resRate}%</Text>
                     <Text style={styles.analyticsLabel}>Resolution Rate</Text>
                     <View style={styles.progressBg}>
-                      <View style={[styles.progressFill, {
-                        width: `${analytics.resRate}%`,
-                        backgroundColor: "#2563eb"
-                      }]} />
+                      <View style={[styles.progressFill, { width: `${analytics.resRate}%`, backgroundColor: "#2563eb" }]} />
                     </View>
                   </View>
                   <View style={styles.analyticsCard}>
@@ -371,16 +543,9 @@ export default function AdminScreen({ currentUser }) {
                     <Text style={styles.analyticsSubtext}>Based on total data</Text>
                   </View>
                 </View>
-
                 <View style={styles.analyticsGrid}>
-                  <View style={[
-                    styles.analyticsCard,
-                    analytics.urgentCount > 0 && styles.urgentCard
-                  ]}>
-                    <Text style={[
-                      styles.analyticsNum,
-                      { color: analytics.urgentCount > 0 ? "#e11d48" : "#1e293b" }
-                    ]}>
+                  <View style={[styles.analyticsCard, analytics.urgentCount > 0 && styles.urgentCard]}>
+                    <Text style={[styles.analyticsNum, { color: analytics.urgentCount > 0 ? "#e11d48" : "#1e293b" }]}>
                       {analytics.urgentCount}
                     </Text>
                     <Text style={styles.analyticsLabel}>Urgent Issues</Text>
@@ -392,7 +557,6 @@ export default function AdminScreen({ currentUser }) {
                     <Text style={styles.analyticsSubtext}>Community engagement</Text>
                   </View>
                 </View>
-
                 {analytics.topCat && (
                   <View style={styles.topCatCard}>
                     <Ionicons name="trophy-outline" size={18} color="#ca8a04" />
@@ -404,7 +568,6 @@ export default function AdminScreen({ currentUser }) {
                     </View>
                   </View>
                 )}
-
                 {stats && (
                   <View style={styles.breakdownCard}>
                     <Text style={styles.analyticsLabel}>Status Breakdown</Text>
@@ -434,7 +597,6 @@ export default function AdminScreen({ currentUser }) {
               </View>
             )}
 
-            {/* Filter Tabs */}
             <View style={styles.filterRow}>
               {["all", "open", "in-progress", "resolved"].map(f => (
                 <TouchableOpacity
@@ -449,7 +611,6 @@ export default function AdminScreen({ currentUser }) {
               ))}
             </View>
 
-            {/* Sort Options */}
             <View style={styles.sortRow}>
               <Text style={styles.sortLabel}>Sort:</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -460,11 +621,7 @@ export default function AdminScreen({ currentUser }) {
                     onPress={() => setActiveSort(s.key)}
                   >
                     {s.key === "priority" && (
-                      <Ionicons
-                        name="alert-circle"
-                        size={12}
-                        color={activeSort === s.key ? "#fff" : "#6b7280"}
-                      />
+                      <Ionicons name="alert-circle" size={12} color={activeSort === s.key ? "#fff" : "#6b7280"} />
                     )}
                     <Text style={[styles.sortChipText, activeSort === s.key && styles.sortChipTextActive]}>
                       {s.label}
@@ -492,9 +649,7 @@ export default function AdminScreen({ currentUser }) {
         }
 
         ListFooterComponent={
-          page < totalPages ? (
-            <Text style={styles.loadMoreText}>Loading more...</Text>
-          ) : null
+          page < totalPages ? <Text style={styles.loadMoreText}>Loading more...</Text> : null
         }
       />
     </View>
@@ -503,6 +658,75 @@ export default function AdminScreen({ currentUser }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f1f5f9" },
+
+  // ── Proof Modal ──
+  modalOverlay: {
+    flex: 1, backgroundColor: "rgba(0,0,0,0.6)",
+    justifyContent: "flex-end",
+  },
+  modalCard: {
+    backgroundColor: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    padding: 24, maxHeight: "90%",
+  },
+  modalHeader: { alignItems: "center", marginBottom: 20, gap: 8 },
+  modalTitle:    { fontSize: 18, fontWeight: "800", color: "#1e293b", textAlign: "center" },
+  modalSubtitle: { fontSize: 13, color: "#64748b", textAlign: "center", lineHeight: 18 },
+
+  compareRow: {
+    flexDirection: "row", alignItems: "flex-start",
+    justifyContent: "space-between", gap: 8, marginBottom: 12,
+  },
+  compareBox:    { flex: 1, alignItems: "center", gap: 6 },
+  compareLabel:  { fontSize: 11, fontWeight: "800", color: "#64748b", letterSpacing: 1 },
+  compareImage:  { width: "100%", height: 130, borderRadius: 12 },
+  noImageBox: {
+    backgroundColor: "#f1f5f9", justifyContent: "center",
+    alignItems: "center", gap: 4,
+  },
+  noImageText: { fontSize: 11, color: "#94a3b8" },
+  uploadBox: {
+    backgroundColor: "#eff6ff", borderWidth: 2,
+    borderColor: "#93c5fd", borderStyle: "dashed",
+    justifyContent: "center", alignItems: "center", gap: 4,
+  },
+  uploadBoxText: { fontSize: 11, color: "#2563eb", fontWeight: "600" },
+
+  changePhotoBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 6, paddingVertical: 8, marginBottom: 12,
+  },
+  changePhotoText: { color: "#2563eb", fontWeight: "600", fontSize: 13 },
+
+  verifyBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 8, backgroundColor: "#2563eb", paddingVertical: 14,
+    borderRadius: 12, marginBottom: 16,
+  },
+  verifyBtnText: { color: "#fff", fontWeight: "800", fontSize: 15 },
+
+  resultBox: {
+    borderRadius: 14, padding: 16, alignItems: "center",
+    gap: 8, marginBottom: 16,
+  },
+  resultTitle:      { fontSize: 16, fontWeight: "800" },
+  resultReason:     { fontSize: 13, color: "#475569", textAlign: "center", lineHeight: 18 },
+  confidenceRow:    { flexDirection: "row", gap: 6, alignItems: "center" },
+  confidenceLabel:  { fontSize: 13, color: "#64748b", fontWeight: "600" },
+  confidenceValue:  { fontSize: 15, fontWeight: "800" },
+
+  modalActions: { gap: 10, marginBottom: 20 },
+  resolveBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 8, backgroundColor: "#16a34a", paddingVertical: 14, borderRadius: 12,
+  },
+  resolveBtnText: { color: "#fff", fontWeight: "800", fontSize: 15 },
+  retryBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 8, backgroundColor: "#eff6ff", paddingVertical: 12, borderRadius: 12,
+  },
+  retryBtnText:  { color: "#2563eb", fontWeight: "700", fontSize: 14 },
+  cancelBtn:     { alignItems: "center", paddingVertical: 10 },
+  cancelBtnText: { color: "#94a3b8", fontWeight: "600", fontSize: 14 },
 
   header: {
     backgroundColor: "#1e293b",
@@ -590,8 +814,7 @@ const styles = StyleSheet.create({
 
   card: {
     backgroundColor: "#fff", borderRadius: 16,
-    marginHorizontal: 16, marginTop: 12,
-    overflow: "hidden",
+    marginHorizontal: 16, marginTop: 12, overflow: "hidden",
     shadowColor: "#000", shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.06, shadowRadius: 8, elevation: 3,
     borderWidth: 0.5, borderColor: "#e2e8f0",
@@ -602,14 +825,11 @@ const styles = StyleSheet.create({
   sevBar:    { height: 4, width: "100%" },
   cardInner: { padding: 14 },
 
-  cardTitleRow: {
-    flexDirection: "row", justifyContent: "space-between",
-    alignItems: "center", marginBottom: 6,
-  },
-  cardTitle:   { fontSize: 15, fontWeight: "700", color: "#1e293b", flex: 1, marginRight: 8 },
-  badge:       { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
-  badgeText:   { fontSize: 10, fontWeight: "700" },
-  cardDesc:    { fontSize: 13, color: "#6b7280", lineHeight: 18, marginBottom: 8 },
+  cardTitleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 },
+  cardTitle:    { fontSize: 15, fontWeight: "700", color: "#1e293b", flex: 1, marginRight: 8 },
+  badge:        { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+  badgeText:    { fontSize: 10, fontWeight: "700" },
+  cardDesc:     { fontSize: 13, color: "#6b7280", lineHeight: 18, marginBottom: 8 },
 
   tagRow:     { flexDirection: "row", gap: 8, marginBottom: 8, flexWrap: "wrap" },
   sevTag:     { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 },

@@ -27,7 +27,29 @@ const SEVERITY_COLORS = {
   Emergency: { bg: "#450a0a", text: "#fca5a5", icon: "alert-circle" },
 };
 
-const BACKEND_URL = "http://10.91.197.133:5000";
+const BACKEND_URL = "https://neighbourhub-backend.onrender.com";
+
+// ── Multipart upload via XMLHttpRequest ─────────────────
+// Works with RN's { uri, name, type } FormData parts on all Expo SDKs
+// (the global fetch in newer SDKs rejects them with "Unsupported FormDataPart").
+const uploadMultipart = (url, formData, timeoutMs = 90000) =>
+  new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.timeout = timeoutMs; // Render free tier cold starts can be slow
+    xhr.onload = () => {
+      try {
+        const json = JSON.parse(xhr.responseText);
+        if (xhr.status >= 200 && xhr.status < 300) resolve(json);
+        else reject(json);
+      } catch (e) {
+        reject(new Error("Bad response: " + xhr.responseText));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Network request failed"));
+    xhr.ontimeout = () => reject(new Error("Request timed out"));
+    xhr.send(formData);
+  });
 
 export default function CreateIssue() {
   const router = useRouter();
@@ -64,19 +86,16 @@ export default function CreateIssue() {
     try {
       const formData = new FormData();
       formData.append("image", { uri, name: "photo.jpg", type: "image/jpeg" });
-      const response = await fetch(`${BACKEND_URL}/api/analyze-image`, {
-        method: "POST",
-        body: formData,
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      const data = await response.json();
+
+      const data = await uploadMultipart(`${BACKEND_URL}/api/analyze-image`, formData);
+
       if (data.title) setTitle(data.title);
       if (data.description) setDescription(data.description);
       if (data.category && CATEGORIES.includes(data.category)) setCategory(data.category);
       if (data.severity && SEVERITIES.includes(data.severity)) setSeverity(data.severity);
       setAiDone(true);
     } catch (err) {
-      console.log("AI analysis failed:", err.message);
+      console.log("AI analysis failed:", err?.message || err);
     } finally {
       setAiLoading(false);
     }
@@ -98,8 +117,10 @@ export default function CreateIssue() {
     data.append("file", { uri: localUri, type: "image/jpeg", name: "issue.jpg" });
     data.append("upload_preset", "neighbourhub");
     data.append("folder", "issues");
-    const res = await fetch("https://api.cloudinary.com/v1_1/dkhdzqxgj/image/upload", { method: "POST", body: data });
-    const json = await res.json();
+    const json = await uploadMultipart(
+      "https://api.cloudinary.com/v1_1/dkhdzqxgj/image/upload",
+      data
+    );
     return json.secure_url;
   };
 
@@ -125,7 +146,7 @@ export default function CreateIssue() {
         setDuplicateIssue(err.response.data.existing);
         setDuplicateModal(true);
       } else {
-        console.log(err.response?.data || err.message);
+        console.log(err.response?.data || err?.error?.message || err.message || err);
         alert("Failed to submit issue ❌");
       }
     } finally {

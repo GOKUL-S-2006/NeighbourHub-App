@@ -4,7 +4,7 @@ import {
   Modal, Image, ActivityIndicator,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { Ionicons, MaterialIcons, Feather } from "@expo/vector-icons";
 import * as Linking from "expo-linking";
 import * as ImagePicker from "expo-image-picker";
@@ -36,7 +36,29 @@ const SORT_OPTIONS = [
 ];
 
 const ALL_STATUSES = ["open", "in-progress", "resolved"];
-const BACKEND_URL  = "http://10.91.197.133:5000";
+const BACKEND_URL  = "https://neighbourhub-backend.onrender.com";
+
+// ── Multipart upload via XMLHttpRequest ─────────────────
+// Works with RN's { uri, name, type } FormData parts on all Expo SDKs.
+// Do NOT set a Content-Type header: XHR adds it with the correct boundary.
+const uploadMultipart = (url, formData, timeoutMs = 90000) =>
+  new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.timeout = timeoutMs; // Render free tier cold starts can be slow
+    xhr.onload = () => {
+      try {
+        const json = JSON.parse(xhr.responseText);
+        if (xhr.status >= 200 && xhr.status < 300) resolve(json);
+        else reject(json);
+      } catch (e) {
+        reject(new Error("Bad response: " + xhr.responseText));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Network request failed"));
+    xhr.ontimeout = () => reject(new Error("Request timed out"));
+    xhr.send(formData);
+  });
 
 export default function AdminScreen({ currentUser }) {
   const router = useRouter();
@@ -184,17 +206,16 @@ export default function AdminScreen({ currentUser }) {
       formData.append("category", proofIssue.category || "general");
       formData.append("issueTitle", proofIssue.title || "");
 
-      const response = await fetch(`${BACKEND_URL}/api/verify-repair`, {
-        method: "POST",
-        body: formData,
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      const data = await uploadMultipart(`${BACKEND_URL}/api/verify-repair`, formData);
 
-      const data = await response.json();
+      if (typeof data?.isRepaired !== "boolean") {
+        throw new Error(data?.error || "Unexpected response from server");
+      }
       setVerifyResult(data);
     } catch (err) {
-      console.log("Verify error:", err.message);
-      Alert.alert("Error", "Failed to verify. Please try again.");
+      const msg = err?.error || err?.message || "Failed to verify. Please try again.";
+      console.log("Verify error:", err);
+      Alert.alert("Could not verify repair", String(msg));
     } finally {
       setVerifying(false);
     }

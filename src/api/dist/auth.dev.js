@@ -11,7 +11,7 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "d
 
 // src/api/auth.js
 var API = _axios["default"].create({
-  baseURL: "http://10.104.77.133:5000/api",
+  baseURL: "https://neighbourhub-backend.onrender.com/api",
   // <-- your IP
   headers: {
     "Content-Type": "application/json"

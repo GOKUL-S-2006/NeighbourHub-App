@@ -1,3 +1,4 @@
+//Updated code
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet,
   Alert, StatusBar, RefreshControl, ScrollView,

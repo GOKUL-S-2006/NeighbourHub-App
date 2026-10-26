@@ -22,13 +22,12 @@ jobs:
           node-version: 22.13.0
           cache: npm
 
-      # 3. Setup Java
+      # 3. Setup Java (Gradle caching disabled)
       - name: Setup Java JDK
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
-          cache: gradle
 
       # 4. Install dependencies
       - name: Install Dependencies
@@ -46,7 +45,7 @@ jobs:
           echo "===== whatwg-fetch dependency tree ====="
           npm ls whatwg-fetch
 
-          echo "===== Check package entry file ====="
+          echo "===== Check package entry resolution ====="
           node -e "console.log(require.resolve('whatwg-fetch'))"
 
           echo "===== Check required file ====="
@@ -60,13 +59,13 @@ jobs:
       # 7. Verify dependencies after prebuild
       - name: Verify Dependencies After Prebuild
         run: |
-          echo "===== Check whatwg-fetch directory ====="
+          echo "===== whatwg-fetch directory ====="
           ls -la node_modules/whatwg-fetch/
           ls -la node_modules/whatwg-fetch/dist/
 
           echo "===== Check required file ====="
           test -f node_modules/whatwg-fetch/dist/fetch.umd.js
-          echo "SUCCESS: fetch.umd.js still exists"
+          echo "SUCCESS: fetch.umd.js exists after prebuild"
 
           echo "===== Check Node resolution ====="
           node -e "console.log(require.resolve('whatwg-fetch'))"
@@ -83,7 +82,7 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
 
-      # 10. Upload APK artifact
+      # 10. Upload APK
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:

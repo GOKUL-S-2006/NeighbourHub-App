@@ -12,67 +12,71 @@ jobs:
 
     steps:
       # 1. Checkout repository
-      - name: 📁 Checkout Repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       # 2. Setup Node.js
-      - name: 🟢 Setup Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.13.0
           cache: npm
 
-      # 3. Setup Java JDK
-      - name: ☕ Setup Java JDK
+      # 3. Setup Java
+      - name: Setup Java JDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      # 4. Install dependencies cleanly
-      - name: 📦 Install Dependencies
+      # 4. Install dependencies
+      - name: Install Dependencies
+        run: npm ci --prefer-online
+
+      # 5. Diagnose whatwg-fetch
+      - name: Verify Dependencies
         run: |
-          npm cache clean --force
-          npm ci --prefer-online
+          echo "===== Node version ====="
+          node --version
 
-      # 5. Verify critical dependencies
-      - name: 🔍 Verify JavaScript Dependencies
-        run: |
-          echo "Checking whatwg-fetch package..."
+          echo "===== npm version ====="
+          npm --version
 
-          node -p "require('./node_modules/whatwg-fetch/package.json').main"
+          echo "===== whatwg-fetch dependency tree ====="
+          npm ls whatwg-fetch || true
 
-          test -f node_modules/whatwg-fetch/dist/fetch.umd.js
-          echo "whatwg-fetch file exists!"
+          echo "===== whatwg-fetch package.json ====="
+          cat node_modules/whatwg-fetch/package.json
 
-          echo "Checking axios package..."
+          echo "===== whatwg-fetch directory ====="
+          ls -la node_modules/whatwg-fetch/
+          ls -la node_modules/whatwg-fetch/dist/ || true
 
-          node -p "require('./node_modules/axios/package.json').version"
+          echo "===== Verify required file ====="
+          if test -f node_modules/whatwg-fetch/dist/fetch.umd.js; then
+            echo "SUCCESS: fetch.umd.js exists"
+          else
+            echo "ERROR: fetch.umd.js is missing"
+            exit 1
+          fi
 
-          test -f node_modules/axios/dist/esm/axios.js
-          echo "axios file exists!"
-
-      # 6. Generate Android project files
-      - name: ⚙️ Generate Android Project Files
+      # 6. Generate Android project
+      - name: Generate Android Project Files
         run: npx expo prebuild --platform android --no-install
 
-      # 7. Configure Android SDK
-      - name: 🤖 Accept Android SDK Licenses
+      # 7. Build APK
+      - name: Build Release APK
         run: |
-          yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --licenses || true
-
-      # 8. Build release APK
-      - name: 🛠️ Build Release APK with Gradle
-        run: |
+          echo "y" | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --licenses || true
           cd android
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
 
-      # 9. Upload APK artifact
-      - name: 📤 Upload APK Artifact
+      # 8. Upload APK
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: NeighbourHub-App-Release-APK
           path: android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
